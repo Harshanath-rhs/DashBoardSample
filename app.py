@@ -1,3 +1,12 @@
+# -*- coding: utf-8 -*-
+"""
+FIMS Dashboard — Berendina Development Services (Gte) Ltd., MEAL Unit.
+Field Issue Management System.
+"""
+
+from __future__ import annotations
+
+import hashlib
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -6,10 +15,12 @@ from urllib.parse import quote
 
 from data_utils import (
     load_data, apply_filters, build_export_table, build_leaderboards, get_last_refresh_time,
+    get_priority_records, build_monthly_trend,
     STATUS_ORDER, STATUS_COLORS, REGION_ORDER,
     CATEGORY_COLORS, ISSUE_FLAG_ORDER, RECORD_CATEGORY_ORDER,
     CLEAN_LABEL, FOLLOWUP_LABEL, ATTENTION_LABEL, UNFLAGGED_LABEL,
 )
+import ai_utils
 
 # ---------------------------------------------------------------- page setup
 st.set_page_config(
@@ -30,7 +41,7 @@ header[data-testid="stHeader"] {
 
 /* Layout */
 .main .block-container {
-    padding-top: 1.4rem;
+    padding-top: 1.2rem;
     padding-bottom: 2.5rem;
     max-width: 1420px;
 }
@@ -40,66 +51,88 @@ html, body, [class*="css"] {
     font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
-/* Header Layout */
+/* ---------- Header ---------- */
 .fims-header {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 16px;
-    margin-bottom: 0.8rem;
-    padding-bottom: 0.9rem;
-    border-bottom: 1px solid rgba(128,128,128,0.18);
-    animation: fadeIn 0.6s ease-out;
+    gap: 18px;
+    margin-bottom: 0.55rem;
+    padding: 0.55rem 0 0.95rem 0;
+    border-bottom: 1px solid rgba(128,128,128,0.16);
+    animation: fadeIn 0.55s ease-out;
 }
 
-/* Logo Sizing */
 .fims-logo {
-    height: 100px;
+    height: 88px;
     width: auto;
     object-fit: contain;
-    border-radius: 1px;
+    border-radius: 6px;
+    flex-shrink: 0;
 }
 
-/* Header Text Wrapper */
 .fims-header-text {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
+    min-width: 0;
 }
 
 .fims-title {
-    font-size: 1.85rem;
-    font-weight: 750;
-    letter-spacing: -0.02em;
-    line-height: 1.2;
+    font-size: 1.95rem;
+    font-weight: 780;
+    letter-spacing: -0.03em;
+    line-height: 1.15;
+    background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 55%, #0ea5e9 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
 .fims-tagline {
-    font-size: 0.98rem;
-    font-weight: 550;
+    font-size: 0.95rem;
+    font-weight: 600;
     opacity: 0.78;
-    letter-spacing: 0.01em;
-    margin-top: 1px;
-    margin-bottom: 2px;
+    letter-spacing: 0.015em;
 }
 
 .fims-subtitle {
-    font-size: 0.92rem;
-    opacity: 0.62;
+    font-size: 0.88rem;
+    opacity: 0.58;
     font-weight: 500;
 }
+
+/* Active filter chips under header */
+.filter-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0.35rem 0 0.85rem 0;
+}
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(37, 99, 235, 0.10);
+    color: #1d4ed8;
+    border: 1px solid rgba(37, 99, 235, 0.18);
+}
+
 
 /* ---------- KPI Cards ---------- */
 .kpi-card {
     background: var(--secondary-background-color);
-    border: 1px solid rgba(128,128,128,0.16);
+    border: 1px solid rgba(128,128,128,0.14);
     border-radius: 12px;
-    padding: 15px 16px 13px 16px;
+    padding: 14px 15px 12px 15px;
     position: relative;
     overflow: hidden;
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    animation: slideUpFade 0.55s ease-out both;
+    animation: slideUpFade 0.5s ease-out both;
 }
 .kpi-card:hover {
     box-shadow: 0 8px 20px rgba(0,0,0,0.08);
@@ -112,30 +145,25 @@ html, body, [class*="css"] {
     height: 3.5px;
 }
 .kpi-label {
-    font-size: 0.71rem;
+    font-size: 0.70rem;
     font-weight: 650;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    opacity: 0.58;
+    opacity: 0.55;
     margin-bottom: 4px;
 }
 .kpi-value {
-    font-size: 1.62rem;
+    font-size: 1.58rem;
     font-weight: 720;
     letter-spacing: -0.02em;
     line-height: 1.15;
-    transition: transform 0.2s ease;
-}
-.kpi-card:hover .kpi-value {
-    transform: scale(1.03);
 }
 .kpi-sub {
-    font-size: 0.72rem;
-    opacity: 0.52;
+    font-size: 0.71rem;
+    opacity: 0.50;
     margin-top: 3px;
 }
 
-/* Meaning colours */
 .kpi-total::before   { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
 .kpi-clean::before   { background: linear-gradient(90deg, #22c55e, #4ade80); }
 .kpi-open::before    { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
@@ -150,13 +178,12 @@ html, body, [class*="css"] {
 .kpi-closed .kpi-value  { color: #059669; }
 .kpi-rate .kpi-value    { color: #0284c7; }
 
-/* Stagger KPI cards */
-.kpi-card:nth-child(1) { animation-delay: 0.05s; }
-.kpi-card:nth-child(2) { animation-delay: 0.10s; }
-.kpi-card:nth-child(3) { animation-delay: 0.15s; }
-.kpi-card:nth-child(4) { animation-delay: 0.20s; }
-.kpi-card:nth-child(5) { animation-delay: 0.25s; }
-.kpi-card:nth-child(6) { animation-delay: 0.30s; }
+.kpi-card:nth-child(1) { animation-delay: 0.04s; }
+.kpi-card:nth-child(2) { animation-delay: 0.08s; }
+.kpi-card:nth-child(3) { animation-delay: 0.12s; }
+.kpi-card:nth-child(4) { animation-delay: 0.16s; }
+.kpi-card:nth-child(5) { animation-delay: 0.20s; }
+.kpi-card:nth-child(6) { animation-delay: 0.24s; }
 
 /* ---------- Leaderboard ---------- */
 .lb-header {
@@ -207,25 +234,24 @@ html, body, [class*="css"] {
     margin-top: 1px;
 }
 
-/* Stagger leaderboard cards */
 .lb-card:nth-child(1) { animation-delay: 0.08s; }
 .lb-card:nth-child(2) { animation-delay: 0.16s; }
 .lb-card:nth-child(3) { animation-delay: 0.24s; }
 
 /* Section headers */
 .section-header {
-    font-size: 1.15rem;
+    font-size: 1.12rem;
     font-weight: 680;
-    margin: 1.55rem 0 0.65rem 0;
+    margin: 1.35rem 0 0.55rem 0;
     letter-spacing: -0.01em;
-    animation: fadeIn 0.5s ease-out;
+    animation: fadeIn 0.45s ease-out;
 }
 
 /* Soft divider */
 .soft-divider {
     height: 1px;
-    background: rgba(128,128,128,0.14);
-    margin: 1.35rem 0 0.55rem 0;
+    background: rgba(128,128,128,0.12);
+    margin: 1.15rem 0 0.45rem 0;
 }
 
 /* Sidebar */
@@ -233,27 +259,109 @@ section[data-testid="stSidebar"] {
     border-right: 1px solid rgba(128,128,128,0.12);
 }
 
-/* ---------- Keyframes ---------- */
+/* ---------- AI panel ---------- */
+
+/* ---------- AI expander accent ---------- */
+div[data-testid="stExpander"]:has(summary:has(span:contains("BDS MEAL AI"))) summary,
+div[data-testid="stExpander"] details summary {
+    /* fallback for all expanders if :has() is limited */
+}
+
+/* Target the first expander (AI Insights) more reliably via a wrapper class if needed.
+   Streamlit doesn't expose expander title in CSS easily, so style ALL expanders softly,
+   then make the AI one stand out with a custom banner already in the panel. */
+
+div[data-testid="stExpander"] {
+    background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(14,165,233,0.06));
+    border: 1px solid rgba(99,102,241,0.22) !important;
+    border-radius: 14px !important;
+    overflow: hidden;
+}
+
+div[data-testid="stExpander"] details summary {
+    font-weight: 650;
+    color: #4338ca;
+    background: linear-gradient(90deg, rgba(99,102,241,0.12), rgba(14,165,233,0.08));
+    border-radius: 14px 14px 0 0;
+    padding: 0.55rem 0.85rem !important;
+}
+
+div[data-testid="stExpander"] details summary:hover {
+    background: linear-gradient(90deg, rgba(99,102,241,0.18), rgba(14,165,233,0.12));
+}
+
+div[data-testid="stExpander"] details[open] summary {
+    border-bottom: 1px solid rgba(99,102,241,0.15);
+}
+
+.ai-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: linear-gradient(135deg, rgba(99,102,241,0.14), rgba(14,165,233,0.10));
+    border: 1px solid rgba(99,102,241,0.28);
+    border-radius: 12px;
+    padding: 10px 16px;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+}
+.ai-pill {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 9px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #6366f1, #0ea5e9);
+    color: #ffffff;
+}
+
+/* Scrollable chat box so the page never grows forever */
+.ai-chat-scroll {
+    max-height: 420px;
+    overflow-y: auto;
+    padding: 8px 6px 10px 6px;
+    border: 1px solid rgba(99,102,241,0.18);
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(99,102,241,0.06), rgba(14,165,233,0.04));
+    margin-top: 0.55rem;
+}
+.ai-chat-turn {
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border-radius: 10px;
+    background: var(--secondary-background-color);
+    border: 1px solid rgba(99,102,241,0.12);
+    border-left: 3px solid #6366f1;
+}
+.ai-chat-q {
+    font-weight: 650;
+    font-size: 0.88rem;
+    margin-bottom: 4px;
+    color: #4f46e5;
+}
+.ai-chat-a {
+    font-size: 0.88rem;
+    opacity: 0.92;
+    line-height: 1.45;
+}
+
+/* Keyframes */
 @keyframes fadeIn {
     from { opacity: 0; }
     to   { opacity: 1; }
 }
-
 @keyframes slideUpFade {
-    from {
-        opacity: 0;
-        transform: translateY(14px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
 /* Mobile */
 @media (max-width: 640px) {
-    .kpi-value { font-size: 1.32rem; }
+    .kpi-value { font-size: 1.28rem; }
     .fims-title { font-size: 1.45rem; }
+    .fims-logo { height: 64px; }
     .main .block-container {
         padding-left: 0.7rem;
         padding-right: 0.7rem;
@@ -262,6 +370,131 @@ section[data-testid="stSidebar"] {
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------- helpers
+def _filter_signature(years, months, regions, districts, interventions, officers, staff, statuses, flags) -> str:
+    """Stable hash of the current filter selection so AI state can reset when filters change."""
+    payload = "|".join([
+        ",".join(map(str, sorted(years or []))),
+        ",".join(sorted(months or [])),
+        ",".join(sorted(regions or [])),
+        ",".join(sorted(districts or [])),
+        ",".join(sorted(interventions or [])),
+        ",".join(sorted(officers or [])),
+        ",".join(sorted(staff or [])),
+        ",".join(sorted(statuses or [])),
+        ",".join(sorted(flags or [])),
+    ])
+    return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+
+def build_ai_context(f_records, f_merged, n_issue, n_escalated, n_closed, resolution_rate, clean_visits) -> str:
+    """Compact numeric + priority snapshot of the CURRENTLY FILTERED data.
+    The model never sees the full raw tables — only aggregates and a small
+    sample of already-visible priority records."""
+    today = pd.Timestamp.today().normalize()
+    reg = f_records.groupby("Region")["RecordID"].nunique().to_dict()
+    sev = f_records["SeverityCategory"].value_counts().to_dict()
+    flag_counts = f_merged["Flag"].value_counts().to_dict()
+    top_issues = f_merged["IssueName"].value_counts().head(5).to_dict()
+    interv = f_merged.groupby("Intervention").size().sort_values(ascending=False).head(5).to_dict()
+
+    # Ageing of open issues
+    open_iss = f_merged[(f_merged["Status"] == "Issue") & f_merged["Created"].notna()]
+    if not open_iss.empty:
+        ages = (today - open_iss["Created"]).dt.days
+        oldest_open_days = int(ages.max())
+        median_open_days = int(ages.median())
+        n_open_with_age = int(len(ages))
+    else:
+        oldest_open_days = 0
+        median_open_days = 0
+        n_open_with_age = 0
+
+    n_attention = int((f_records["MapCategory"] == ATTENTION_LABEL).sum())
+    n_followup = int((f_records["MapCategory"] == FOLLOWUP_LABEL).sum())
+
+    # Top staff by open issues
+    open_by_staff = (
+        f_merged[f_merged["Status"] == "Issue"]
+        .groupby("NameofResponsibleStaff")
+        .size()
+        .sort_values(ascending=False)
+        .head(5)
+        .to_dict()
+    )
+
+    # Priority sample (same ranking the UI shows) so AI can name them
+    priority_df = get_priority_records(f_records, f_merged, top_n=5)
+    if priority_df.empty:
+        priority_lines = "None — no records currently need immediate attention."
+    else:
+        priority_lines = priority_df.to_string(index=False)
+
+    # Sample of open issues with comments (for richer Q&A, still capped)
+    commented = f_merged[
+        (f_merged["Status"] == "Issue") & (f_merged["Comment"].astype(str).str.strip() != "")
+    ].head(8)
+    if commented.empty:
+        sample_comments = "No open issues with officer comments in this filter."
+    else:
+        sample_comments = "\n".join(
+            f"- [{r.Flag}] {r.IssueName} (Beneficiary: {r.BeneficiaryName}): {r.Comment}"
+            for r in commented.itertuples()
+        )
+
+    lines = [
+        f"Total visits: {f_records['RecordID'].nunique()}",
+        f"Clean visits (no issues): {clean_visits}",
+        f"Open issues: {n_issue}, Escalated: {n_escalated}, Closed: {n_closed}, "
+        f"Resolution rate: {resolution_rate:.1f}%",
+        f"Records needing immediate attention (map): {n_attention}",
+        f"Records needing follow-up (map): {n_followup}",
+        f"Open issues with known age: {n_open_with_age}; "
+        f"oldest open issue age: {oldest_open_days} days; median open age: {median_open_days} days",
+        f"Visits by region: {reg}",
+        f"Records by severity category: {sev}",
+        f"Issues by severity flag: {flag_counts}",
+        f"Top 5 issue types (by count): {top_issues}",
+        f"Top 5 interventions by issue count: {interv}",
+        f"Top 5 staff by open issue count: {open_by_staff}",
+        "",
+        "Priority records (need immediate attention, oldest first):",
+        priority_lines,
+        "",
+        "Sample open issues that have officer comments:",
+        sample_comments,
+    ]
+    return "\n".join(lines)
+
+
+def _active_filter_chips(sel_years, sel_months, sel_regions, sel_districts,
+                         sel_interventions, sel_officers, sel_staff, sel_status, sel_flag):
+    chips = []
+    if sel_years:
+        chips.append(f"Year: {', '.join(map(str, sel_years))}")
+    if sel_months:
+        chips.append(f"Month: {', '.join(sel_months)}")
+    if sel_regions:
+        chips.append(f"Region: {', '.join(sel_regions)}")
+    if sel_districts:
+        chips.append(f"District: {', '.join(sel_districts)}")
+    if sel_interventions:
+        chips.append(f"Intervention: {', '.join(sel_interventions[:3])}{'…' if len(sel_interventions) > 3 else ''}")
+    if sel_officers:
+        chips.append(f"MEAL: {', '.join(sel_officers[:2])}{'…' if len(sel_officers) > 2 else ''}")
+    if sel_staff:
+        chips.append(f"Staff: {', '.join(sel_staff[:2])}{'…' if len(sel_staff) > 2 else ''}")
+    if sel_status:
+        chips.append(f"Status: {', '.join(sel_status)}")
+    if sel_flag:
+        chips.append(f"Flag: {', '.join(sel_flag)}")
+    if not chips:
+        return
+    html = '<div class="filter-chip-row">' + "".join(f'<span class="filter-chip">{c}</span>' for c in chips) + "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
 
 # ---------------------------------------------------------------- Header
 st.markdown(
@@ -281,10 +514,11 @@ st.markdown(
 # ---------------------------------------------------------------- load data
 records, issues, merged, notes = load_data()
 last_refresh = get_last_refresh_time()
-st.caption(f"Data last refreshed: **{last_refresh}**")
+ai_status = "🟢 **BDS MEAL AI:** Connected" if ai_utils.is_available() else "⚪ **BDS MEAL AI:** Not connected"
+st.caption(f"Data last refreshed: **{last_refresh}**  ·  {ai_status}")
 
 with st.sidebar:
-    st.markdown("### Filters")
+    st.markdown("### Filters 🔍")
     st.caption(f"Last refresh: **{last_refresh}**")
 
     years = sorted([y for y in records["Year"].dropna().unique().tolist()])
@@ -321,6 +555,16 @@ with st.sidebar:
     with wc2:
         st.link_button("Email", _email_url, use_container_width=True)
 
+    if not ai_utils.is_available():
+        st.markdown("---")
+        st.caption("🤖 BDS MEAL AI is not connected. Add a Groq API key to `.streamlit/secrets.toml` to enable AI insights.")
+
+# Active filter chips under header
+_active_filter_chips(
+    sel_years, sel_months, sel_regions, sel_districts,
+    sel_interventions, sel_officers, sel_staff, sel_status, sel_flag,
+)
+
 f_records, f_merged = apply_filters(
     records, merged, sel_years, sel_months, sel_regions, sel_districts, sel_interventions,
     sel_officers, sel_staff, sel_status, sel_flag,
@@ -329,6 +573,17 @@ f_records, f_merged = apply_filters(
 if f_records.empty:
     st.warning("No records match the selected filters.")
     st.stop()
+
+# Filter signature — used to reset AI chat / generated content when filters change
+_filter_sig = _filter_signature(
+    sel_years, sel_months, sel_regions, sel_districts,
+    sel_interventions, sel_officers, sel_staff, sel_status, sel_flag,
+)
+if st.session_state.get("_ai_filter_sig") != _filter_sig:
+    st.session_state["_ai_filter_sig"] = _filter_sig
+    # Reset AI artefacts that are filter-dependent
+    for k in ("ai_chat_history", "ai_exec_summary", "ai_priority_brief", "ai_themes", "ai_trend_note"):
+        st.session_state.pop(k, None)
 
 status_counts = f_merged["Status"].value_counts()
 n_issue = int(status_counts.get("Issue", 0))
@@ -366,6 +621,149 @@ for col, label, value, sub, css_class in kpis:
 
 st.markdown('<div class="soft-divider"></div>', unsafe_allow_html=True)
 
+# ---------------------------------------------------------------- BDS MEAL AI Insights (collapsible so charts stay primary)
+with st.expander("⚗️ BDS MEAL AI Insights", expanded=False):
+    if not ai_utils.is_available():
+        st.markdown(
+            f'<div class="ai-banner"><span class="ai-pill">Setup needed</span>{ai_utils.NOT_CONFIGURED_MSG}</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        ai_context = build_ai_context(
+            f_records, f_merged, n_issue, n_escalated, n_closed, resolution_rate, clean_visits
+        )
+
+        ai_tab1, ai_tab2, ai_tab3, ai_tab4, ai_tab5 = st.tabs(
+            ["📝 Executive Summary", "💬 Ask BDS MEAL AI", "🎯 Priority Radar", "🗂️ Comment Themes", "📈 Trend Insight"]
+        )
+
+        # ---- Executive Summary ----
+        with ai_tab1:
+            st.caption("An AI-written narrative of the currently filtered data.")
+            if st.button("Generate Executive Summary", key="ai_exec_summary_btn"):
+                with st.spinner("BDS MEAL AI is analyzing..."):
+                    st.session_state["ai_exec_summary"] = ai_utils.generate_executive_summary(ai_context)
+            if "ai_exec_summary" in st.session_state:
+                st.markdown(st.session_state["ai_exec_summary"])
+
+        # ---- Ask BDS MEAL AI ----
+        with ai_tab2:
+            st.caption(
+                "Ask a question about the currently filtered data. Answers are grounded in the numbers and "
+                "priority sample above. Chat resets when you change filters."
+            )
+            if "ai_chat_history" not in st.session_state:
+                st.session_state["ai_chat_history"] = []
+
+            with st.form("ai_ask_form", clear_on_submit=True):
+                q = st.text_input(
+                    "Your question",
+                    placeholder="e.g. Which region needs the most attention right now?",
+                )
+                col_ask, col_clear = st.columns([3, 1])
+                with col_ask:
+                    asked = st.form_submit_button("Ask", use_container_width=True)
+                with col_clear:
+                    clear_chat = st.form_submit_button("Clear chat", use_container_width=True)
+
+            if clear_chat:
+                st.session_state["ai_chat_history"] = []
+                st.rerun()
+
+            if asked and q.strip():
+                with st.spinner("BDS MEAL AI is thinking..."):
+                    answer = ai_utils.answer_question(q.strip(), ai_context)
+                st.session_state["ai_chat_history"].append((q.strip(), answer))
+
+            history = st.session_state.get("ai_chat_history", [])
+            if history:
+                # Show newest first inside a fixed-height scroll box
+                turns_html = []
+                for hist_q, hist_a in reversed(history):
+                    # Escape is not needed for markdown later; we render via st.markdown per turn
+                    turns_html.append((hist_q, hist_a))
+
+                st.markdown(
+                    f'<div class="ai-chat-scroll" id="ai-chat-box">',
+                    unsafe_allow_html=True,
+                )
+                for hist_q, hist_a in turns_html:
+                    st.markdown(
+                        f"""
+                        <div class="ai-chat-turn">
+                            <div class="ai-chat-q">Q: {hist_q}</div>
+                            <div class="ai-chat-a">{hist_a}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                st.markdown("</div>", unsafe_allow_html=True)
+                st.caption(f"{len(history)} question(s) in this filter session.")
+
+        # ---- Priority Radar ----
+        with ai_tab3:
+            st.caption(
+                "Top open records deterministically ranked by how long they've needed immediate attention "
+                "(oldest first) — AI only writes the suggested next steps below, it does not decide the ranking."
+            )
+            priority_df = get_priority_records(f_records, f_merged, top_n=5)
+            if priority_df.empty:
+                st.success("No records currently flagged as needing immediate attention. 🎉")
+            else:
+                st.dataframe(priority_df, hide_index=True, use_container_width=True)
+                if st.button("Get AI Priority Briefing", key="ai_priority_btn"):
+                    records_str = priority_df.to_string(index=False)
+                    with st.spinner("BDS MEAL AI is analyzing..."):
+                        st.session_state["ai_priority_brief"] = ai_utils.generate_priority_narrative(records_str)
+                if "ai_priority_brief" in st.session_state:
+                    st.markdown(st.session_state["ai_priority_brief"])
+
+        # ---- Comment Themes ----
+        with ai_tab4:
+            st.caption("AI-clustered themes across officer comments logged on issues.")
+            comments_series = f_merged.loc[f_merged["Comment"].astype(str).str.strip() != "", "Comment"]
+            if comments_series.empty:
+                st.caption("No officer comments in the current filter selection.")
+            else:
+                if st.button("Analyze Comment Themes", key="ai_theme_btn"):
+                    sample = comments_series.head(150).tolist()
+                    comments_str = "\n".join(f"- {c}" for c in sample)
+                    with st.spinner("BDS MEAL AI is reading comments..."):
+                        st.session_state["ai_themes"] = ai_utils.summarize_comment_themes(comments_str)
+                    if len(comments_series) > 150:
+                        st.caption(f"Analyzed the first 150 of {len(comments_series)} comments in this filter.")
+                themes = st.session_state.get("ai_themes")
+                if themes:
+                    theme_df = pd.DataFrame(sorted(themes.items(), key=lambda x: -x[1]), columns=["Theme", "Count"])
+                    fig = px.bar(
+                        theme_df, x="Count", y="Theme", orientation="h",
+                        color="Count", color_continuous_scale="Blues",
+                    )
+                    fig.update_layout(
+                        height=max(300, 32 * len(theme_df)),
+                        margin=dict(t=8, b=8, l=8, r=8),
+                        showlegend=False, coloraxis_showscale=False,
+                        yaxis_title="", xaxis_title="Comments",
+                        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                elif "ai_themes" in st.session_state:
+                    st.caption("Couldn't extract themes from the response — try again.")
+
+        # ---- Trend Insight ----
+        with ai_tab5:
+            st.caption("AI narrative on the month-by-month trend of visits, issues logged, and issues closed.")
+            trend_for_ai = build_monthly_trend(f_records, f_merged)
+            if st.button("Get AI Trend Insight", key="ai_trend_btn"):
+                trend_display = trend_for_ai.copy()
+                trend_display["Period"] = trend_display["Period"].dt.strftime("%b %Y")
+                with st.spinner("BDS MEAL AI is analyzing the trend..."):
+                    st.session_state["ai_trend_note"] = ai_utils.explain_trend(trend_display.to_string(index=False))
+            if "ai_trend_note" in st.session_state:
+                st.markdown(st.session_state["ai_trend_note"])
+
+st.markdown('<div class="soft-divider"></div>', unsafe_allow_html=True)
+
 # ---------------------------------------------------------------- Staff Leaderboard
 st.markdown('<div class="section-header">Staff Leaderboard</div>', unsafe_allow_html=True)
 
@@ -373,6 +771,7 @@ all_staff = sorted(f_records["NameofResponsibleStaff"].dropna().unique().tolist(
 solvers_df, responders_df = build_leaderboards(f_merged, all_staff)
 
 TOP_N = 3
+
 
 def render_leaderboard(df: pd.DataFrame, top_n: int = TOP_N):
     ranked = df[df["Rank"].notna()]
@@ -404,6 +803,7 @@ def render_leaderboard(df: pd.DataFrame, top_n: int = TOP_N):
             """,
             unsafe_allow_html=True,
         )
+
 
 lb1, lb2 = st.columns(2)
 with lb1:
@@ -441,14 +841,13 @@ with c1:
     fig = px.pie(
         reg_counts, names="Region", values="Visits", hole=0.48,
         category_orders={"Region": REGION_ORDER},
-        color_discrete_sequence=px.colors.qualitative.Set2
+        color_discrete_sequence=px.colors.qualitative.Set2,
     )
-    # Keep count inside the chart; percentage only on hover
     fig.update_traces(
         textposition="inside",
         textinfo="label+value",
         textfont_size=12,
-        hovertemplate="<b>%{label}</b><br>Visits: %{value}<br>Percentage: %{percent}<extra></extra>"
+        hovertemplate="<b>%{label}</b><br>Visits: %{value}<br>Percentage: %{percent}<extra></extra>",
     )
     fig.update_layout(margin=dict(t=8, b=8, l=8, r=8), height=360, showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
@@ -466,20 +865,19 @@ with c2:
     fig = px.pie(
         sev_counts, names="Category", values="Records", hole=0.48,
         category_orders={"Category": RECORD_CATEGORY_ORDER},
-        color="Category", color_discrete_map=CATEGORY_COLORS
+        color="Category", color_discrete_map=CATEGORY_COLORS,
     )
-    # Only count inside the chart; full description + % on hover
     fig.update_traces(
         textposition="inside",
-        textinfo="value",                    # count only
+        textinfo="value",
         textfont_size=13,
-        hovertemplate="<b>%{label}</b><br>Records: %{value}<br>Percentage: %{percent}<extra></extra>"
+        hovertemplate="<b>%{label}</b><br>Records: %{value}<br>Percentage: %{percent}<extra></extra>",
     )
     fig.update_layout(
         margin=dict(t=8, b=8, l=8, r=8),
         height=360,
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="center", x=0.5)
+        legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="center", x=0.5),
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -492,7 +890,7 @@ with c3:
     if not sb_df.empty:
         fig = px.sunburst(
             sb_df, path=["Region", "District", "Status"],
-            color="Status", color_discrete_map=STATUS_COLORS
+            color="Status", color_discrete_map=STATUS_COLORS,
         )
         fig.update_traces(textinfo="label+value", insidetextorientation="radial")
         fig.update_layout(margin=dict(t=8, b=8, l=8, r=8), height=420)
@@ -508,20 +906,19 @@ with c4:
         fig = px.pie(
             sev2_counts, names="Flag", values="Count", hole=0.48,
             category_orders={"Flag": ISSUE_FLAG_ORDER},
-            color="Flag", color_discrete_map=CATEGORY_COLORS
+            color="Flag", color_discrete_map=CATEGORY_COLORS,
         )
-        # Only count inside; description + % on hover; legend at bottom
         fig.update_traces(
             textposition="inside",
             textinfo="value",
             textfont_size=13,
-            hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>"
+            hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>",
         )
         fig.update_layout(
             margin=dict(t=8, b=8, l=8, r=8),
             height=420,
             showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="center", x=0.5)
+            legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="center", x=0.5),
         )
         st.plotly_chart(fig, use_container_width=True)
     else:
@@ -581,7 +978,7 @@ if not map_df.empty:
         hover_name="BeneficiaryName",
         hover_data={
             "Intervention": True, "GND": True, "UnsolvedIssuesDisplay": True,
-            "Region": True, "District": True, "Latitude": False, "Longitude": False, "MapCategory": False
+            "Region": True, "District": True, "Latitude": False, "Longitude": False, "MapCategory": False,
         },
         zoom=6.7, height=560, **label_kwargs,
     )
@@ -608,7 +1005,7 @@ with c5:
         fig = px.bar(
             interv_counts, x="Issues", y="Intervention", color="Flag", orientation="h",
             category_orders={"Intervention": order, "Flag": ISSUE_FLAG_ORDER},
-            color_discrete_map=CATEGORY_COLORS
+            color_discrete_map=CATEGORY_COLORS,
         )
         fig.update_layout(
             height=max(380, 28 * len(order)),
@@ -634,7 +1031,7 @@ with c6:
         fig = px.bar(
             top_df, x="Count", y="IssueName", color="Flag", orientation="h",
             category_orders={"IssueName": order, "Flag": ISSUE_FLAG_ORDER},
-            color_discrete_map=CATEGORY_COLORS
+            color_discrete_map=CATEGORY_COLORS,
         )
         fig.update_layout(
             height=380,
@@ -651,35 +1048,20 @@ c7, c8 = st.columns(2)
 
 with c7:
     st.markdown('<div class="section-header">Visits, Issues & Actions Over Time</div>', unsafe_allow_html=True)
-    trend_visits = f_records.groupby(f_records["DateOfVisit"].dt.to_period("M")).agg(Visits=("RecordID", "nunique"))
-    issues_dated = f_merged.dropna(subset=["DateOfVisit"])
-    trend_issues = issues_dated.groupby(issues_dated["DateOfVisit"].dt.to_period("M")).size().rename("Issues")
-    closed_dated = f_merged[(f_merged["Status"] == "Closed")].dropna(subset=["Modified"])
-    trend_actions = closed_dated.groupby(closed_dated["Modified"].dt.to_period("M")).size().rename("ActionsTaken")
-
-    trend = (
-        trend_visits
-        .join(trend_issues, how="outer")
-        .join(trend_actions, how="outer")
-        .fillna(0)
-        .reset_index()
-    )
-    trend = trend.rename(columns={trend.columns[0]: "Period"})
-    trend["Period"] = trend["Period"].dt.to_timestamp()
-    trend = trend.sort_values("Period")
+    trend = build_monthly_trend(f_records, f_merged)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=trend["Period"], y=trend["Visits"], name="Visits",
-        mode="lines+markers", line=dict(color="#3b82f6", width=2.8)
+        mode="lines+markers", line=dict(color="#3b82f6", width=2.8),
     ))
     fig.add_trace(go.Scatter(
         x=trend["Period"], y=trend["Issues"], name="Issues logged",
-        mode="lines+markers", line=dict(color="#ef4444", width=2.8)
+        mode="lines+markers", line=dict(color="#ef4444", width=2.8),
     ))
     fig.add_trace(go.Scatter(
         x=trend["Period"], y=trend["ActionsTaken"], name="Actions taken (Closed)",
-        mode="lines+markers", line=dict(color="#22c55e", width=2.8)
+        mode="lines+markers", line=dict(color="#22c55e", width=2.8),
     ))
     fig.update_layout(
         height=380,
@@ -702,17 +1084,21 @@ with c8:
         for s in STATUS_ORDER:
             reg_status[f"{s}_pct"] = reg_status[s] / reg_status["Total"] * 100
         fig = go.Figure()
-
-        # Custom labels for the legend
         status_display_names = {"Issue": "Open", "Escalated": "Escalated", "Closed": "Closed"}
 
         for s in STATUS_ORDER:
+            display_name = status_display_names.get(s, s)
             fig.add_trace(go.Bar(
-                y=reg_status.index, 
-                x=reg_status[f"{s}_pct"], 
-                name=status_display_names.get(s, s), # Uses 'Open' instead of 'Issue'
-                orientation="h", 
-                marker_color=STATUS_COLORS[s]
+                y=reg_status.index,
+                x=reg_status[f"{s}_pct"],
+                name=display_name,
+                orientation="h",
+                marker_color=STATUS_COLORS[s],
+                customdata=reg_status[s],
+                hovertemplate=(
+                    "<b>%{y}</b><br>" + display_name + ": %{x:.2f}%"
+                    "<br>Count: %{customdata:.0f}<extra></extra>"
+                ),
             ))
         fig.update_layout(
             barmode="stack",
@@ -726,13 +1112,13 @@ with c8:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.caption("No issues logged for the current filter selection.")
-        
+
 # Staff type
 st.markdown('<div class="section-header">Visits by Responsible Staff Type (CDC / YDC)</div>', unsafe_allow_html=True)
 type_counts = f_records.groupby("ResponsibleStaff")["RecordID"].nunique().reset_index(name="Visits")
 fig = px.bar(
     type_counts, x="ResponsibleStaff", y="Visits", color="ResponsibleStaff",
-    color_discrete_sequence=px.colors.qualitative.Pastel
+    color_discrete_sequence=px.colors.qualitative.Pastel,
 )
 fig.update_layout(
     height=320,
@@ -754,7 +1140,11 @@ with st.expander("Data quality notes"):
         st.write("No data quality issues detected — no duplicates, no orphaned records, no unflagged issues.")
     else:
         if has_duplicates:
-            st.write(f"- {notes['duplicate_records_dropped']} duplicate Record ID row(s) were dropped (kept first occurrence).")
+            st.write(
+                f"- {notes['duplicate_records_dropped']} duplicate Record ID row(s) were dropped "
+                "(kept first occurrence). Recommend removing these from SharePoint:"
+            )
+            st.dataframe(notes["duplicate_record_rows"], use_container_width=True, hide_index=True)
 
         if has_orphans:
             st.write(
@@ -770,6 +1160,20 @@ with st.expander("Data quality notes"):
                 "(likely a mismatched entry in SharePoint):"
             )
             st.write(", ".join(f"`{t}`" for t in notes["unflagged_issue_texts"]))
+
+        if ai_utils.is_available() and (has_duplicates or has_orphans or has_unflagged):
+            if st.button("Explain in plain English (BDS MEAL AI)", key="ai_dq_btn"):
+                dq_lines = []
+                if has_duplicates:
+                    dq_lines.append(f"{notes['duplicate_records_dropped']} duplicate RecordIDs dropped.")
+                if has_orphans:
+                    dq_lines.append(f"{len(notes['orphan_issues'])} issues reference a RecordID that doesn't exist.")
+                if has_unflagged:
+                    dq_lines.append(f"{len(notes['unflagged_issue_texts'])} issue texts didn't match the flag mapping sheet.")
+                with st.spinner("BDS MEAL AI is analyzing..."):
+                    st.session_state["ai_dq_note"] = ai_utils.explain_data_quality("\n".join(dq_lines))
+            if "ai_dq_note" in st.session_state:
+                st.markdown(st.session_state["ai_dq_note"])
 
 # Explore & Export
 st.markdown('<div class="section-header">Explore & Export Data</div>', unsafe_allow_html=True)
